@@ -1,0 +1,52 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual Environment
+myenv/
+venv/
+env/
+
+# Django
+db.sqlite3
+media/
+staticfiles/
+
+# Environment Variables
+.env
+.env.*
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Python cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Migrations (Keep __init__.py)
+**/migrations/*
+!**/migrations/__init__.py
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Docker
+*.pid
+
+# PostgreSQL local data (if any)
+postgres_data/
+
+# Node
+node_modules/
