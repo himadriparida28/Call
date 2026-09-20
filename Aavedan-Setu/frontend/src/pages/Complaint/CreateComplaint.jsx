@@ -104,6 +104,7 @@ export default function CreateComplaint() {
   const [isAutoStacking, setIsAutoStacking] = useState(false);
   const [viewMatchedModal, setViewMatchedModal] = useState(false);
   const [matchedTicketDetail, setMatchedTicketDetail] = useState(null);
+  const [isAnalyzingImage, setIsAnalyzingImage] = useState(false);
   const isAutoFilling = useRef(false);
 
   /* watched values */
@@ -449,7 +450,7 @@ export default function CreateComplaint() {
     if (descText.trim().length >= 10) {
       try {
         toast.info("✨ AI analyzing description & auto-filling form...");
-        const sessId = `session_form_${Date.now()}`;
+        const sessId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '123e4567-e89b-12d3-a456-426614174000';
         const res = await aiService.sendChatMessage(descText, sessId);
 
         const aiCat = res.category;
@@ -520,8 +521,10 @@ export default function CreateComplaint() {
       } catch (err) {
         console.error("AI Assist classification failed:", err);
       }
+    } else if (images && images.length > 0) {
+      analyzeImageAndAutoFill(images[0]);
     } else {
-      toast.info("Please enter a short description of your issue first so AI can auto-fill details!");
+      toast.info("Please enter a short description or upload an image so AI can auto-fill form details!");
     }
 
     const currentValues = {
@@ -537,6 +540,120 @@ export default function CreateComplaint() {
     const event = new CustomEvent('open_ai_assistant_with_data', { detail: currentValues });
     window.dispatchEvent(event);
   };
+
+  /* ── Vision AI Image Analysis & Auto-Fill ── */
+  const analyzeImageAndAutoFill = useCallback(async (imageFile) => {
+    if (!imageFile) return;
+    setIsAnalyzingImage(true);
+    toast.info("📸 Vision AI analyzing uploaded image & auto-filling form...");
+
+    try {
+      const reader = new FileReader();
+      reader.onloadend = async () => {
+        const base64Image = reader.result;
+        const sessId = typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : '123e4567-e89b-12d3-a456-426614174000';
+        const promptText = "Analyze this uploaded civic complaint photo. Identify the issue, title, description, category, department, address, state, and district.";
+
+        try {
+          const res = await aiService.sendChatMessage(promptText, sessId, null, base64Image);
+
+          const aiCat = res.category;
+          const aiDept = res.department;
+          const aiState = res.entities?.state;
+          const aiDistrict = res.entities?.district;
+          const aiAddress = res.entities?.address;
+          const aiLandmark = res.entities?.landmark;
+          let generatedTitle = res.complaint_type || res.title;
+          if (generatedTitle && generatedTitle.startsWith("Analyze this uploaded")) {
+            generatedTitle = aiCat || "Civic Complaint";
+          }
+
+          let generatedDesc = res.generated_description || res.draft_description || res.description;
+          if (generatedDesc && generatedDesc.startsWith("Analyze this uploaded")) {
+            generatedDesc = null;
+          }
+          if (!generatedDesc && res.reply && !res.reply.startsWith("Analyze this uploaded") && !res.reply.includes("I can help you file")) {
+            generatedDesc = res.reply;
+          }
+
+          // 1. Auto-fill Title
+          if (generatedTitle) {
+            const formattedTitle = generatedTitle.startsWith("AI Grievance:") ? generatedTitle : `AI Grievance: ${generatedTitle}`;
+            setValue('title', formattedTitle, { shouldValidate: true, shouldDirty: true });
+          }
+
+          // 2. Auto-fill Description
+          if (generatedDesc && generatedDesc.length > 5) {
+            setValue('description', generatedDesc, { shouldValidate: true, shouldDirty: true });
+          }
+
+          // 3. Auto-fill Address & Landmark if valid
+          if (aiAddress && !aiAddress.startsWith('State:') && !aiAddress.startsWith('District:')) {
+            setValue('address', aiAddress, { shouldValidate: true, shouldDirty: true });
+          }
+          if (aiLandmark && aiLandmark !== 'None') {
+            setValue('landmark', aiLandmark, { shouldValidate: true, shouldDirty: true });
+          }
+
+          // 4. Auto-fill Category
+          if (aiCat && dbCategories.length > 0) {
+            const matched = findFuzzyMatch(dbCategories, aiCat);
+            if (matched) setValue('category', matched.id.toString(), { shouldValidate: true, shouldDirty: true });
+          }
+
+          // 5. Auto-fill Department
+          if (aiDept && dbDepartments.length > 0) {
+            const matched = findFuzzyMatch(dbDepartments, aiDept);
+            if (matched) setValue('department', matched.id.toString(), { shouldValidate: true, shouldDirty: true });
+          }
+
+          // 6. Auto-fill State & District
+          let targetState = aiState;
+          if (!targetState && aiDistrict) {
+            targetState = 'Bihar';
+          }
+          if (targetState && dbStates.length > 0) {
+            isAutoFilling.current = true;
+            const matchedState = findFuzzyMatch(dbStates, targetState);
+            if (matchedState) {
+              const stateIdStr = matchedState.id.toString();
+              setValue('state', stateIdStr, { shouldValidate: true, shouldDirty: true, shouldTouch: true });
+
+              setLoadingLocations(true);
+              try {
+                const districtsData = await locationService.getDistricts(stateIdStr);
+                setDbDistricts(districtsData);
+                setLoadingLocations(false);
+
+                if (aiDistrict && districtsData.length > 0) {
+                  const matchedDistrict = findFuzzyMatch(districtsData, aiDistrict);
+                  if (matchedDistrict) {
+                    setValue('district', matchedDistrict.id.toString(), { shouldValidate: true, shouldDirty: true, shouldTouch: true });
+                  }
+                }
+              } catch (dErr) {
+                console.error("Failed to load districts for AI vision state:", dErr);
+                setLoadingLocations(false);
+              } finally {
+                setTimeout(() => { isAutoFilling.current = false; }, 500);
+              }
+            }
+          }
+
+          toast.success("✨ Vision AI completed! Title, Description, Category & Department auto-filled.");
+        } catch (apiErr) {
+          console.error("Vision AI analysis call failed:", apiErr);
+          toast.warning("Image attached! Unable to perform full Vision AI analysis.");
+        } finally {
+          setIsAnalyzingImage(false);
+        }
+      };
+      reader.readAsDataURL(imageFile);
+    } catch (err) {
+      console.error("Error reading image file:", err);
+      setIsAnalyzingImage(false);
+    }
+  }, [dbCategories, dbDepartments, dbStates, setValue]);
 
   /* ── image helpers ── */
   const addImages = useCallback((files) => {
@@ -561,7 +678,12 @@ export default function CreateComplaint() {
       };
       reader.readAsDataURL(file);
     });
-  }, [images.length]);
+
+    // Automatically trigger Vision AI Analysis directly on image upload
+    if (toAdd.length > 0) {
+      analyzeImageAndAutoFill(toAdd[0]);
+    }
+  }, [images.length, analyzeImageAndAutoFill]);
 
   const removeImage = useCallback((index) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
@@ -1011,6 +1133,17 @@ export default function CreateComplaint() {
                 </button>
               </div>
             </div>
+
+            {/* Vision AI Scanning Loader Banner */}
+            {isAnalyzingImage && (
+              <div className="p-3.5 rounded-xl bg-indigo-50 border-2 border-indigo-300 text-indigo-950 flex items-center gap-3 animate-pulse mb-3 shadow-2xs">
+                <div className="w-5 h-5 border-2 border-indigo-600 border-t-transparent rounded-full animate-spin shrink-0" />
+                <div>
+                  <h4 className="text-xs font-black text-indigo-900 uppercase tracking-wider">Vision AI Processing Image</h4>
+                  <p className="text-xs text-indigo-800">Analyzing civic defect photo... Title, description, category, and department will auto-fill shortly.</p>
+                </div>
+              </div>
+            )}
             <textarea
               id="description"
               rows={5}
