@@ -114,9 +114,9 @@ class AIOrchestrator:
                 image_data=image_data,
             )
             result = self._classification_service.resolve(signal)
-        except (LLMProviderError, LLMTimeoutError) as exc:
+        except Exception as exc:
             logger.warning(
-                f"Gemini API rate limited or unavailable ({exc}). Utilizing zero-downtime offline classification rules."
+                f"LLM API or classification error ({exc}). Utilizing zero-downtime offline classification rules."
             )
             result = self._classification_service.fallback_classify(cleaned_text)
 
@@ -130,6 +130,8 @@ class AIOrchestrator:
             entities=result.entities,
             priority=result.priority,
             classification_confidence=result.confidence,
+            title=result.title,
+            description=result.description,
         )
 
         logger.info(
