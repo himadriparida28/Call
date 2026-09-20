@@ -61,18 +61,22 @@ class ComplaintAnalyzer:
                     
                     category_code = data.get("category_code")
 
-                    # Prioritize KnowledgeRetriever sub-issue rule match for exact title/dept/cost, 
-                    # fallback to LLM category and department when KnowledgeRetriever has no rule.
-                    resolved_category_name = kr_result.get("category") or data.get("category_display_name")
-                    resolved_type_name = kr_result.get("complaint_type") or data.get("sub_issue_code") or data.get("category_display_name")
-                    resolved_dept_name = kr_result.get("department") or data.get("department_name")
-                    resolved_priority = (kr_result.get("priority") or data.get("priority") or "MEDIUM").upper()
-                    
+                    # Prioritize AI microservice output for category, department, title, and generated description
+                    resolved_category_name = data.get("category_display_name") or kr_result.get("category") or "Roads & Infrastructure"
+                    raw_title = data.get("title") or data.get("sub_issue_code") or kr_result.get("complaint_type") or data.get("category_display_name") or "Civic Complaint"
+                    resolved_type_name = raw_title if (raw_title and not raw_title.strip().startswith("Analyze this uploaded")) else resolved_category_name
+                    resolved_dept_name = data.get("department_name") or kr_result.get("department") or "Public Works Department (PWD)"
+                    resolved_priority = (data.get("priority") or kr_result.get("priority") or "MEDIUM").upper()
+                    raw_desc = data.get("generated_description") or data.get("description")
+                    generated_desc = raw_desc if (raw_desc and not raw_desc.strip().startswith("Analyze this uploaded")) else None
+
                     # Look up ComplaintType from DB if available
-                    ct = ComplaintType.objects.filter(name__icontains=resolved_type_name.split()[0]).first()
+                    ct = None
+                    if resolved_type_name:
+                        ct = ComplaintType.objects.filter(name__icontains=resolved_type_name.split()[0]).first()
                     if not ct and category_code:
                         ct = ComplaintType.objects.filter(category__name__iexact=resolved_category_name).first()
-                    
+
                     req_fields = []
                     if ct:
                         for rf in ct.required_fields.all():
@@ -89,6 +93,7 @@ class ComplaintAnalyzer:
                         "category": resolved_category_name,
                         "department": resolved_dept_name,
                         "priority": resolved_priority,
+                        "generated_description": generated_desc,
                         "estimated_resolution_days": kr_result.get("estimated_resolution_days") or (ct.estimated_resolution_days if ct else 3),
                         "estimated_cost": kr_result.get("estimated_cost", 25000.00),
                         "required_fields": req_fields,
@@ -225,16 +230,17 @@ class ComplaintAnalyzer:
             # If no complaint type is matched, we need clarification/details
             analysis["needs_clarification"] = True
 
-        # Generate a clean, professional 3-line formal issue description (Pure issue focus; location is stored separately)
-        comp_type = analysis.get("complaint_type") or "Civic Grievance"
-        dept = analysis.get("department") or "Municipal Authority"
-        cat = analysis.get("category") or "Public Infrastructure"
-        prio = str(analysis.get("priority") or "high").upper()
-        
-        line1 = f"Official Grievance Notice regarding {comp_type} under {dept} ({cat})."
-        line2 = f"Operational Impact: Disruption reported affecting local public convenience and infrastructure safety."
-        line3 = f"Public Urgency ({prio}): Escalated for immediate technical inspection, field crew deployment, and resolution dispatch."
-        
-        analysis["generated_description"] = f"{line1}\n{line2}\n{line3}"
+        # Preserve AI-generated description if provided by external AI service
+        if retriever_result.get("generated_description"):
+            analysis["generated_description"] = retriever_result["generated_description"]
+        else:
+            comp_type = (analysis.get("complaint_type") or "civic infrastructure defect").lower()
+            dept = analysis.get("department") or "the municipal authority"
+            
+            sentence1 = f"The services in the area have been disrupted due to a {comp_type}."
+            sentence2 = f"This failure is causing significant inconvenience to local residents who rely on {dept} for daily needs."
+            sentence3 = f"Prompt repair and field inspection is requested to restore normal public provision."
+            
+            analysis["generated_description"] = f"{sentence1} {sentence2} {sentence3}"
 
         return analysis
