@@ -59,6 +59,14 @@ async def classify_complaint(
         ),
         priority=complaint.priority.level,
         priority_reason=complaint.priority.reason,
+        title=(
+            complaint.title if (complaint.title and not complaint.title.strip().startswith("Analyze this uploaded"))
+            else complaint.category.display_name.get("en", complaint.category.code).replace("_", " ").title()
+        ),
+        generated_description=(
+            complaint.description if (complaint.description and not complaint.description.strip().startswith("Analyze this uploaded"))
+            else f"Visual civic complaint submitted regarding {complaint.category.display_name.get('en', complaint.category.code).replace('_', ' ').title()}. Field inspection and municipal resolution dispatched."
+        ),
         entities=EntitiesResponse(
             location=complaint.entities.location,
             landmark=complaint.entities.landmark,
