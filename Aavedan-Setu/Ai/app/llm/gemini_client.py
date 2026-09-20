@@ -85,32 +85,65 @@ class GeminiClient:
                 "Authorization": f"Bearer {groq_key}",
                 "Content-Type": "application/json"
             }
-            groq_model = os.getenv("GROQ_MODEL", "groq/compound-mini")
-            groq_payload = {
-                "model": groq_model,
-                "messages": [
-                    {"role": "system", "content": "You are Aavedan-Setu AI assistant. Respond strictly in valid JSON format."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.1
-            }
-            try:
-                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                    resp = await client.post(groq_url, json=groq_payload, headers=groq_headers)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                        if content:
-                            # Strip out <think>...</think> tags if present from reasoning models
-                            import re
-                            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                            logger.info(f"Successfully generated response via Groq Cloud API ({groq_model})")
-                            return content
-                    logger.warning(f"Groq API returned status {resp.status_code}: {resp.text[:200]}")
-                    raise LLMProviderError(f"Groq API failed with status {resp.status_code}. Falling back to offline KnowledgeEngine.")
-            except Exception as exc:
-                logger.warning(f"Groq API call error: {exc}. Falling back to offline KnowledgeEngine.")
-                raise LLMProviderError(f"Groq API call failed: {exc}. Falling back to offline KnowledgeEngine.")
+            if image_data:
+                # Prioritize Groq Vision Multimodal Model
+                groq_models = [
+                    "qwen/qwen3.8-27b",
+                    os.getenv("GROQ_VISION_MODEL") or "qwen/qwen3.8-27b",
+                ]
+            else:
+                groq_models = [
+                    os.getenv("GROQ_MODEL_NAME") or "groq/compound-mini",
+                    "qwen/qwen3.8-27b",
+                    "groq/compound-mini",
+                    "groq/compound",
+                    "openai/gpt-oss-120b",
+                    "openai/gpt-oss-20b"
+                ]
+            groq_models = list(dict.fromkeys([m for m in groq_models if m]))
+
+            for model_candidate in groq_models:
+                is_vision_candidate = "qwen" in model_candidate or "vision" in model_candidate or "llama-3.2" in model_candidate
+                if image_data and is_vision_candidate:
+                    mime = image_data.get("mimeType", "image/jpeg")
+                    base64_str = image_data.get("data", "")
+                    user_msg_content = [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:{mime};base64,{base64_str}"
+                            }
+                        }
+                    ]
+                elif image_data:
+                    # Skip non-vision models when image_data is passed
+                    continue
+                else:
+                    user_msg_content = prompt
+
+                groq_payload = {
+                    "model": model_candidate,
+                    "messages": [
+                        {"role": "system", "content": "You are Aavedan-Setu AI assistant. Analyze the photo/query carefully. Write a concise title (e.g. 'Broken Water Pipe' or 'Severe Road Pothole') and a formal 2-3 sentence citizen complaint description stating the issue, its impact on local residents, and requesting prompt repair. Return valid JSON only."},
+                        {"role": "user", "content": user_msg_content}
+                    ],
+                    "temperature": 0.1
+                }
+                try:
+                    async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
+                        resp = await client.post(groq_url, json=groq_payload, headers=groq_headers)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+                            if content:
+                                import re
+                                content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                                logger.info(f"Successfully generated response via Groq Cloud API ({model_candidate})")
+                                return content
+                        logger.warning(f"Groq model '{model_candidate}' returned status {resp.status_code}: {resp.text[:200]}")
+                except Exception as exc:
+                    logger.warning(f"Groq model '{model_candidate}' call error: {exc}. Trying next model...")
 
         keys = self._get_active_keys()
         # Strictly use verified active model aliases
