@@ -73,6 +73,8 @@ class Complaint(BaseModel):
     department: Department | None = None
     entities: ExtractedEntities | None = None
     priority: PriorityAssessment | None = None
+    title: str | None = None
+    description: str | None = None
 
     generated_draft: str | None = Field(
         default=None,
