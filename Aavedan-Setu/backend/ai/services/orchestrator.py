@@ -39,6 +39,8 @@ class AIOrchestrator:
 
         # 3. Detect intent
         intent = self.intent_detector.detect(clean_msg)
+        if image_base64 and intent in [Intent.UNKNOWN, Intent.GREETING, Intent.HELP]:
+            intent = Intent.FILE_COMPLAINT
 
         prev_action = session.get("next_action")
         active_complaint = session.get("complaint_type")
