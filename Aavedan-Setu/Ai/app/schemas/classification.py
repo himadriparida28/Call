@@ -58,6 +58,8 @@ class ClassifyComplaintResponse(BaseModel):
     department_name: str
     priority: PriorityLevel
     priority_reason: str
+    title: str | None = None
+    generated_description: str | None = None
     entities: EntitiesResponse
     suggested_documents: list[str] = Field(default_factory=list)
     confidence: float = Field(
