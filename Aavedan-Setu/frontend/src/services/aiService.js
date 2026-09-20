@@ -8,11 +8,12 @@ import api from './api';
  * @param {string} sessionId - Conversation session UUID.
  * @returns {Promise<Object>} API Response data containing intent, reply/message, missing_fields, next_action, etc.
  */
-export const sendChatMessage = async (message, sessionId, entities = null) => {
+export const sendChatMessage = async (message, sessionId, entities = null, imageBase64 = null) => {
   const response = await api.post('/ai/chat/', {
     message,
     session_id: sessionId,
-    ...(entities && { entities })
+    ...(entities && { entities }),
+    ...(imageBase64 && { image_base64: imageBase64 })
   });
   return response.data;
 };
